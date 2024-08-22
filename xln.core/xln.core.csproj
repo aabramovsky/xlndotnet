@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Nethereum.Hex" Version="4.21.4" />
+    <PackageReference Include="Nethereum.JsonRpc.Client" Version="4.21.4" />
+    <PackageReference Include="Nethereum.Signer" Version="4.21.4" />
+    <PackageReference Include="Nethereum.Web3" Version="4.21.4" />
+  </ItemGroup>
+
+</Project>
