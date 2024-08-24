@@ -12,46 +12,6 @@ using System.Text.Json.Serialization;
 namespace xln.core
 {
 
-  public enum BodyTypes
-  {
-    Undef = 0,
-    FlushMessage = 1,
-    BroadcastProfile = 2,
-    GetProfile = 3
-  }
-
-  [MessagePackObject]
-  public class IBody
-  {
-    [Key(0)]
-    [JsonConverter(typeof(JsonStringEnumConverter))]
-    public BodyTypes Type { get; set; }
-
-    // Additional properties can be added here
-    // Use [Key(n)] attributes for MessagePack serialization
-  }
-
-  [MessagePackObject]
-  public class IHeader
-  {
-    [Key(0)]
-    public string From { get; set; }
-
-    [Key(1)]
-    public string To { get; set; }
-  }
-
-  [MessagePackObject]
-  public class IMessage
-  {
-    [Key(0)]
-    public IHeader Header { get; set; }
-
-    [Key(1)]
-    public IBody Body { get; set; }
-  }
-}
-
 #if false
 
 namespace xln.core
@@ -116,7 +76,7 @@ namespace xln.core
       _transport.Open();
     }
 
-    public void SendMessage(string recipientAddress, IMessage message)
+    public void SendMessage(string recipientAddress, Message message)
     {
       _transport.Send(recipientAddress, message);
     }
@@ -182,7 +142,7 @@ namespace xln.core
   public interface ITransport1
   {
     void Open();
-    void Send(string recipientAddress, IMessage message);
+    void Send(string recipientAddress, Message message);
     void Close();
   }
 
@@ -204,7 +164,7 @@ namespace xln.core
       _webSocket.ConnectAsync(new Uri("ws://localhost:8080"), CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public void Send(string recipientAddress, IMessage message)
+    public void Send(string recipientAddress, Message message)
     {
       var json = JsonConvert.SerializeObject(message);
       var buffer = Encoding.UTF8.GetBytes(json);
@@ -290,7 +250,7 @@ namespace xln.core
     public BigInteger OnDelta { get; set; }
   }
 
-  public interface IMessage
+  public interface Message
   {
     MessageHeader Header { get; set; }
     object Body { get; set; }
@@ -305,3 +265,5 @@ namespace xln.core
 }
 
 #endif
+
+}

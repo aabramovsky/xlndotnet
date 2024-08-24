@@ -1,4 +1,4 @@
-using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities;
+//using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities;
 using System.Net.WebSockets;
 using System.Reflection.PortableExecutable;
 using xln.core;
@@ -96,7 +96,7 @@ namespace xln.transport.test
       _server.Start(uriToListen);
       await Task.Delay(1000);
 
-      var messageReceived = new TaskCompletionSource<IMessage>();
+      var messageReceived = new TaskCompletionSource<xln.core.Message>();
 
       _server.OnClientConnected += async (sender, args) =>
       {
@@ -108,11 +108,12 @@ namespace xln.transport.test
 
       var client = await WebSocketClient.ConnectTo(new Uri(ServerUrl), CancellationToken.None);
 
-      var testMessage = new IMessage
+      var testMessage = new Message
       {
-        Header = new IHeader { From = "TestClient", To = "TestServer" },
-        Body = new IBody { Type = BodyTypes.FlushMessage }
+        Header = new Header { From = "TestClient", To = "TestServer" },
+        Body = new Body(BodyTypes.kFlushMessage)
       };
+
 
       await client.SendAsync(testMessage, CancellationToken.None);
 
@@ -120,7 +121,7 @@ namespace xln.transport.test
       Assert.IsNotNull(receivedMessage);
       Assert.AreEqual("TestClient", receivedMessage.Header.From);
       Assert.AreEqual("TestServer", receivedMessage.Header.To);
-      Assert.AreEqual(BodyTypes.FlushMessage, receivedMessage.Body.Type);
+      Assert.AreEqual(BodyTypes.kFlushMessage, receivedMessage.Body.Type);
 
       await client.CloseAsync(CancellationToken.None);
       client.Dispose();

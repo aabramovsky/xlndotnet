@@ -14,8 +14,8 @@ namespace xln.core
 {
   public interface ITransport : IDisposable
   {
-    Task SendAsync(IMessage msg, CancellationToken ct);
-    Task<IMessage> ReceiveAsync(CancellationToken ct);
+    Task SendAsync(Message msg, CancellationToken ct);
+    Task<Message> ReceiveAsync(CancellationToken ct);
     Task CloseAsync(CancellationToken ct);
   }
 
@@ -29,13 +29,13 @@ namespace xln.core
       _ws = ws;
     }
 
-    public async Task SendAsync(IMessage msg, CancellationToken ct)
+    public async Task SendAsync(Message msg, CancellationToken ct)
     {
       byte[] encodedMsg = MessagePackSerializer.Serialize(msg);
       await _ws.SendAsync(new ArraySegment<byte>(encodedMsg), WebSocketMessageType.Binary, true, ct);
     }
 
-    public async Task<IMessage> ReceiveAsync(CancellationToken ct)
+    public async Task<Message> ReceiveAsync(CancellationToken ct)
     {
       const int BufferSize = 4096; // Размер буфера для чтения
       var buffer = new byte[BufferSize];
@@ -71,11 +71,11 @@ namespace xln.core
       return null; // или throw new WebSocketClosedException();
     }
 
-    private IMessage DecodeMessage(byte[] messageBytes)
+    private Message DecodeMessage(byte[] messageBytes)
     {
       try
       {
-        return MessagePackSerializer.Deserialize<IMessage>(messageBytes);
+        return MessagePackSerializer.Deserialize<Message>(messageBytes);
       }
       catch (Exception ex)
       {
