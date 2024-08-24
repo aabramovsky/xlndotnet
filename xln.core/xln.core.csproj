@@ -7,6 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="high-performance-websocket-server.cs" />
+    <Compile Remove="transport-csharp.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MessagePack" Version="2.5.172" />
     <PackageReference Include="Nethereum.Hex" Version="4.21.4" />
     <PackageReference Include="Nethereum.JsonRpc.Client" Version="4.21.4" />
     <PackageReference Include="Nethereum.Signer" Version="4.21.4" />

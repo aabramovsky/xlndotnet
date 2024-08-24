@@ -4,9 +4,55 @@ using Nethereum.Signer;
 using Microsoft.Extensions.Logging;
 using System.Net.WebSockets;
 using System.Text;
-using Newtonsoft.Json;
+//using Newtonsoft.Json;
 using System.Numerics;
+using MessagePack;
+using System.Text.Json.Serialization;
 
+namespace xln.core
+{
+
+  public enum BodyTypes
+  {
+    Undef = 0,
+    FlushMessage = 1,
+    BroadcastProfile = 2,
+    GetProfile = 3
+  }
+
+  [MessagePackObject]
+  public class IBody
+  {
+    [Key(0)]
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public BodyTypes Type { get; set; }
+
+    // Additional properties can be added here
+    // Use [Key(n)] attributes for MessagePack serialization
+  }
+
+  [MessagePackObject]
+  public class IHeader
+  {
+    [Key(0)]
+    public string From { get; set; }
+
+    [Key(1)]
+    public string To { get; set; }
+  }
+
+  [MessagePackObject]
+  public class IMessage
+  {
+    [Key(0)]
+    public IHeader Header { get; set; }
+
+    [Key(1)]
+    public IBody Body { get; set; }
+  }
+}
+
+#if false
 
 namespace xln.core
 {
@@ -78,38 +124,6 @@ namespace xln.core
     // Implement other methods (CreateChannel, ProcessPayment, etc.)
   }
 
-  public class Channel
-  {
-    private readonly ILogger<Channel> _logger;
-    private readonly IChannelStorage _channelStorage;
-
-    public ChannelState State { get; private set; }
-
-    public Channel(string leftAddress, string rightAddress, ILogger<Channel> logger, IChannelStorage channelStorage)
-    {
-      _logger = logger;
-      _channelStorage = channelStorage;
-      State = new ChannelState
-      {
-        Left = leftAddress,
-        Right = rightAddress,
-        // Initialize other state properties
-      };
-    }
-
-    public void ApplyTransition(ITransition transition)
-    {
-      transition.Apply(this);
-      SaveState();
-    }
-
-    private void SaveState()
-    {
-      _channelStorage.SaveChannelState(State);
-    }
-
-    // Implement other channel-related methods
-  }
 
   public interface ITransition
   {
@@ -165,19 +179,19 @@ namespace xln.core
     }
   }
 
-  public interface ITransport
+  public interface ITransport1
   {
     void Open();
     void Send(string recipientAddress, IMessage message);
     void Close();
   }
 
-  public class WebSocketTransport : ITransport
+  public class WebSocketTransport1 : ITransport1
   {
     private readonly ILogger<WebSocketTransport> _logger;
     private ClientWebSocket _webSocket;
 
-    public WebSocketTransport(ILogger<WebSocketTransport> logger)
+    public WebSocketTransport1(ILogger<WebSocketTransport> logger)
     {
       _logger = logger;
       _webSocket = new ClientWebSocket();
@@ -259,42 +273,6 @@ namespace xln.core
 
 
 
-  public class ChannelState
-  {
-    public string Left { get; set; }
-    public string Right { get; set; }
-    public string ChannelKey { get; set; }
-    public string PreviousBlockHash { get; set; }
-    public string PreviousStateHash { get; set; }
-    public long BlockId { get; set; }
-    public long Timestamp { get; set; }
-    public long TransitionId { get; set; }
-    public List<Subchannel> Subchannels { get; set; } = new List<Subchannel>();
-    public List<StoredSubcontract> Subcontracts { get; set; } = new List<StoredSubcontract>();
-  }
-
-  public class Subchannel
-  {
-    public int ChainId { get; set; }
-    public List<Delta> Deltas { get; set; } = new List<Delta>();
-    public long CooperativeNonce { get; set; }
-    public long DisputeNonce { get; set; }
-    public List<ProposedEvent> ProposedEvents { get; set; } = new List<ProposedEvent>();
-    public bool ProposedEventsByLeft { get; set; }
-  }
-
-  public class Delta
-  {
-    public int TokenId { get; set; }
-    public BigInteger Collateral { get; set; }
-    public BigInteger OnDelta { get; set; }
-    public BigInteger OffDelta { get; set; }
-    public BigInteger LeftCreditLimit { get; set; }
-    public BigInteger RightCreditLimit { get; set; }
-    public BigInteger LeftAllowance { get; set; }
-    public BigInteger RightAllowance { get; set; }
-  }
-
   public class StoredSubcontract
   {
     public ITransition OriginalTransition { get; set; }
@@ -325,3 +303,5 @@ namespace xln.core
   }
 
 }
+
+#endif
