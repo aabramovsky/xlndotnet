@@ -106,7 +106,7 @@ namespace xln.transport.test
         transport.Dispose();
       };
 
-      var client = await WebSocketClient.ConnectTo(new Uri(ServerUrl), CancellationToken.None);
+      var client = await WebSocketClient.ConnectTo(new Uri(ServerUrl), "test", CancellationToken.None);
 
       var testMessage = new Message
       {

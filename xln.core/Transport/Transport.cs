@@ -14,6 +14,7 @@ namespace xln.core
 {
   public interface ITransport : IDisposable
   {
+    bool IsOpen { get; }
     Task SendAsync(Message msg, CancellationToken ct);
     Task<Message> ReceiveAsync(CancellationToken ct);
     Task CloseAsync(CancellationToken ct);
@@ -29,9 +30,14 @@ namespace xln.core
       _ws = ws;
     }
 
+    public bool IsOpen 
+    { 
+      get { return _ws?.State == WebSocketState.Open; } 
+    }
+
     public async Task SendAsync(Message msg, CancellationToken ct)
     {
-      byte[] encodedMsg = MessagePackSerializer.Serialize(msg);
+      byte[] encodedMsg = MessageSerializer.Encode(msg);
       await _ws.SendAsync(new ArraySegment<byte>(encodedMsg), WebSocketMessageType.Binary, true, ct);
     }
 
@@ -41,41 +47,35 @@ namespace xln.core
       var buffer = new byte[BufferSize];
       var receivedBytes = new List<byte>();
 
-      while (_ws.State == WebSocketState.Open)
+      //if (_ws.State != WebSocketState.Open)
+      //  return null;
+      
+      WebSocketReceiveResult result;
+      do
       {
-        WebSocketReceiveResult result;
-        do
-        {
-          result = await _ws.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
-          receivedBytes.AddRange(new ArraySegment<byte>(buffer, 0, result.Count));
-        }
-        while (!result.EndOfMessage);
-
-        if (result.MessageType == WebSocketMessageType.Binary)
-        {
-          var messageBytes = receivedBytes.ToArray();
-          return DecodeMessage(messageBytes);
-        }
-        else if (result.MessageType == WebSocketMessageType.Close)
-        {
-          await CloseAsync(ct);
-          return null;
-        }
-        else
-        {
-          throw new InvalidOperationException($"Unexpected WebSocket message type: {result.MessageType}");
-        }
+        result = await _ws.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
+        receivedBytes.AddRange(new ArraySegment<byte>(buffer, 0, result.Count));
       }
+      while (!result.EndOfMessage);
 
-      // Если соединение закрыто, возвращаем null или выбрасываем исключение
-      return null; // или throw new WebSocketClosedException();
+      //if (result.MessageType == WebSocketMessageType.Close)
+      //{
+      //  await CloseAsync(ct);
+      //  return null;
+      //}
+
+      if (result.MessageType != WebSocketMessageType.Binary)
+        throw new InvalidOperationException($"Unexpected WebSocket message type: {result.MessageType}");
+      
+      var messageBytes = receivedBytes.ToArray();
+      return DecodeMessage(messageBytes);
     }
 
     private Message DecodeMessage(byte[] messageBytes)
     {
       try
       {
-        return MessagePackSerializer.Deserialize<Message>(messageBytes);
+        return MessageSerializer.Decode(messageBytes);
       }
       catch (Exception ex)
       {

@@ -12,9 +12,13 @@ namespace xln.core
   {
     public ITransport Transport { get; }
 
-    public ServerEventArgs(ITransport transport)
+    public XlnAddress xlnAddress { get; }
+
+    public ServerEventArgs(XlnAddress address, ITransport transport)
     {
-      Transport = transport;
+      // todo check if parameters are correct
+      this.Transport = transport;
+      this.xlnAddress = address;
     }
   }
 
@@ -37,9 +41,9 @@ namespace xln.core
 
     public event EventHandler<ServerEventArgs>? OnClientConnected;
 
-    protected virtual void RaiseOnClientConnected(ITransport transport)
+    protected virtual void RaiseOnClientConnected(string authHeader, ITransport transport)
     {
-      OnClientConnected?.Invoke(this, new ServerEventArgs(transport));
+      OnClientConnected?.Invoke(this, new ServerEventArgs(authHeader, transport));
     }
   }
 }

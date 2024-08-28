@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Nethereum.JsonRpc.Client;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -9,8 +10,14 @@ using System.Threading.Tasks;
 
 namespace xln.core
 {
+  public class TransportConstants
+  {
+    public const string AuthorizationHeaderKey = "Authorization";
+  }
+
   public class WebSocketServer : Server
   {
+    
     private HttpListener _listener = null;
     private CancellationTokenSource _cts = null;
 
@@ -41,19 +48,23 @@ namespace xln.core
         try
         {
           var context = await _listener.GetContextAsync();
-          if (context.Request.IsWebSocketRequest)
-          {
-            var webSocketContext = await context.AcceptWebSocketAsync(null);
-            RaiseOnClientConnected(new WebSocketTransport(webSocketContext.WebSocket));
-            //var clientId = Guid.NewGuid();
-            //_clients.TryAdd(clientId, webSocketContext.WebSocket);
-            //_ = HandleClientAsync(clientId, webSocketContext.WebSocket);
-          }
-          else
+          if (!context.Request.IsWebSocketRequest)
           {
             context.Response.StatusCode = 400;
             context.Response.Close();
           }
+          else if (!context.Request.Headers.AllKeys.Contains(TransportConstants.AuthorizationHeaderKey))
+          {
+            //Console.WriteLine("Authorization header is missing");
+            context.Response.StatusCode = 401; // Unauthorized
+            context.Response.Close();
+          }
+          else
+          {
+            string authHeader = context.Request.Headers[TransportConstants.AuthorizationHeaderKey];
+            var webSocketContext = await context.AcceptWebSocketAsync(null);
+            RaiseOnClientConnected(authHeader, new WebSocketTransport(webSocketContext.WebSocket));
+          }          
         }
         catch (Exception ex)
         {
@@ -80,9 +91,10 @@ namespace xln.core
 
   public class WebSocketClient
   {
-    public static async Task<ITransport> ConnectTo(Uri uri, CancellationToken ct)
+    public static async Task<ITransport> ConnectTo(Uri uri, UserID myId, CancellationToken ct)
     {
       ClientWebSocket ws = new ClientWebSocket();
+      ws.Options.SetRequestHeader(TransportConstants.AuthorizationHeaderKey, myId);
       await ws.ConnectAsync(uri, ct);
 
       return new WebSocketTransport(ws);
