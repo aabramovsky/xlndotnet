@@ -63,7 +63,10 @@ namespace xln.core
           {
             string authHeader = context.Request.Headers[TransportConstants.AuthorizationHeaderKey];
             var webSocketContext = await context.AcceptWebSocketAsync(null);
-            RaiseOnClientConnected(authHeader, new WebSocketTransport(webSocketContext.WebSocket));
+
+            IPAddress clientIpAddress = ((IPEndPoint)context.Request.RemoteEndPoint).Address;
+
+            RaiseOnClientConnected(authHeader, clientIpAddress, new WebSocketTransport(webSocketContext.WebSocket));
           }          
         }
         catch (Exception ex)

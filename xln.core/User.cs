@@ -62,10 +62,10 @@ namespace xln.core
     private void _server_OnClientConnected(object? sender, ServerEventArgs e)
     {
       //TODO set real uri
-      OnTransportCreated(e.xlnAddress, new Uri(""), e.Transport);
+      OnTransportCreated(e.xlnAddress, e.Transport);
     }
 
-    private void OnTransportCreated(XlnAddress xlnAddress, Uri uri, ITransport transport)
+    private void OnTransportCreated(XlnAddress xlnAddress, ITransport transport)
     {
       lock (_lockTransports)
       {
@@ -86,7 +86,28 @@ namespace xln.core
       ITransport transport = await WebSocketClient.ConnectTo(uri, _myId, CancellationToken.None);
 
       //TODO set real xlnaddress
-      OnTransportCreated(uri.ToString(), uri, transport);
+      OnTransportCreated(uri.ToString(), transport);
+
+      SendTestMessage(transport);
+    }
+
+    private async void SendTestMessage(ITransport transport)
+    {
+      var message = new Message
+      {
+        Header = new Header
+        {
+          From = "sender@example.com",
+          To = "recipient@example.com"
+        },
+        Body = new Body(BodyTypes.kBroadcastProfile)
+      };
+
+      // Добавляем дополнительные свойства в Body
+      message.Body.SetProperty("name", "John Doe");
+      message.Body.SetProperty("age", 30);
+
+      await transport.SendAsync(message, CancellationToken.None);
     }
 
     //public Channel GetOrCreateChannel(string address)

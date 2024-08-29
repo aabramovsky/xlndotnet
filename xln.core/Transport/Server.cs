@@ -41,7 +41,7 @@ namespace xln.core
 
     public event EventHandler<ServerEventArgs>? OnClientConnected;
 
-    protected virtual void RaiseOnClientConnected(string authHeader, ITransport transport)
+    protected virtual void RaiseOnClientConnected(string authHeader, IPAddress clientIpAddress, ITransport transport)
     {
       OnClientConnected?.Invoke(this, new ServerEventArgs(authHeader, transport));
     }

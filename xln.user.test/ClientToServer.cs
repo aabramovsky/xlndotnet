@@ -36,7 +36,7 @@ namespace xln.user.test
       serverUser.StartServer(_uriToListen);
 
       // Даем серверу время на запуск
-      await Task.Delay(10000);
+      await Task.Delay(5000);
 
       // Подключаем клиента
       clientUser.ConnectTo(new Uri(_serverUrl));
