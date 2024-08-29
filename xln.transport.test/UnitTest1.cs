@@ -119,8 +119,8 @@ namespace xln.transport.test
 
       var receivedMessage = await messageReceived.Task;
       Assert.IsNotNull(receivedMessage);
-      Assert.AreEqual("TestClient", receivedMessage.Header.From);
-      Assert.AreEqual("TestServer", receivedMessage.Header.To);
+      Assert.AreEqual(new XlnAddress("TestClient"), receivedMessage.Header.From);
+      Assert.AreEqual(new XlnAddress("TestServer"), receivedMessage.Header.To);
       Assert.AreEqual(BodyTypes.kFlushMessage, receivedMessage.Body.Type);
 
       await client.CloseAsync(CancellationToken.None);

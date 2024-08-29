@@ -19,8 +19,8 @@ namespace xln.message.test
         Body = new Body(BodyTypes.kBroadcastProfile)
       };
 
-      Assert.AreEqual("sender", message.Header.From);
-      Assert.AreEqual("receiver", message.Header.To);
+      Assert.AreEqual(new XlnAddress("sender"), message.Header.From);
+      Assert.AreEqual(new XlnAddress("receiver"), message.Header.To);
       Assert.AreEqual(BodyTypes.kBroadcastProfile, message.Body.Type);
     }
 

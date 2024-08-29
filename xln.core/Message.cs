@@ -19,10 +19,10 @@ namespace xln.core
   public class Header
   {
     [Key("from")]
-    public string From { get; set; }
+    public XlnAddress From { get; set; }
 
     [Key("to")]
-    public string To { get; set; }
+    public XlnAddress To { get; set; }
   }
 
   public enum BodyTypes
