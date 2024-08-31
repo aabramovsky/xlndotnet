@@ -24,6 +24,7 @@ namespace xln.core
   {
     protected WebSocket _ws;
     private bool disposed = false;
+    private readonly SemaphoreSlim _sendSemaphore = new SemaphoreSlim(1, 1);
 
     public WebSocketTransport(WebSocket ws)
     {
@@ -38,7 +39,15 @@ namespace xln.core
     public async Task SendAsync(Message msg, CancellationToken ct)
     {
       byte[] encodedMsg = MessageSerializer.Encode(msg);
-      await _ws.SendAsync(new ArraySegment<byte>(encodedMsg), WebSocketMessageType.Binary, true, ct);
+      await _sendSemaphore.WaitAsync(ct);
+      try
+      {
+        await _ws.SendAsync(new ArraySegment<byte>(encodedMsg), WebSocketMessageType.Binary, true, ct);
+      }
+      finally
+      {
+        _sendSemaphore.Release();
+      }
     }
 
     public async Task<Message> ReceiveAsync(CancellationToken ct)
