@@ -38,6 +38,29 @@ namespace xln.core
       Subchannels = new List<Subchannel>();
       //Subcontracts = new List<StoredSubcontract>();
     }
+
+    public ChannelState DeepClone()
+    {
+      return new ChannelState
+      {
+        Left = new XlnAddress(Left.ToString()), // Create a new XlnAddress with the same value
+        Right = new XlnAddress(Right.ToString()),
+        ChannelKey = ChannelKey,
+        PreviousBlockHash = PreviousBlockHash,
+        PreviousStateHash = PreviousStateHash,
+        BlockId = BlockId,
+        Timestamp = Timestamp,
+        TransitionId = TransitionId,
+        Subchannels = Subchannels?.Select(s => s.DeepClone()).ToList() // Assuming Subchannel has a DeepClone method
+                                                                       //Subcontracts = Subcontracts?.Select(s => s.DeepClone()).ToList() // Uncomment if needed
+      };
+    }
+
+    // Implement ICloneable interface
+    public object Clone()
+    {
+      return DeepClone();
+    }
   }
 
   public class Subchannel
@@ -49,6 +72,24 @@ namespace xln.core
 
     //public List<ProposedEvent> ProposedEvents { get; set; } = new List<ProposedEvent>();
     public bool ProposedEventsByLeft { get; set; }
+
+    public Subchannel DeepClone()
+    {
+      return new Subchannel
+      {
+        ChainId = ChainId,
+        Deltas = Deltas?.Select(d => d.DeepClone()).ToList(),
+        CooperativeNonce = CooperativeNonce,
+        DisputeNonce = DisputeNonce,
+        //ProposedEvents = ProposedEvents?.Select(pe => pe.DeepClone()).ToList(), // Uncomment if needed
+        ProposedEventsByLeft = ProposedEventsByLeft
+      };
+    }
+
+    public object Clone()
+    {
+      return DeepClone();
+    }
   }
 
   public class Delta
@@ -61,34 +102,36 @@ namespace xln.core
     public BigInteger RightCreditLimit { get; set; }
     public BigInteger LeftAllowance { get; set; }
     public BigInteger RightAllowance { get; set; }
+
+    public Delta DeepClone()
+    {
+      return new Delta
+      {
+        TokenId = TokenId,
+        Collateral = Collateral,
+        OnDelta = OnDelta,
+        OffDelta = OffDelta,
+        LeftCreditLimit = LeftCreditLimit,
+        RightCreditLimit = RightCreditLimit,
+        LeftAllowance = LeftAllowance,
+        RightAllowance = RightAllowance
+      };
+    }
+
+    public object Clone()
+    {
+      return DeepClone();
+    }
   }
 
   
-
-  public class SendMessageTask : ITask
-  {
-    private readonly Message _msg;
-    private readonly Channel _channel;
-    public SendMessageTask(Channel channel, Message msg)
-    {
-      _channel = channel;
-      _msg = msg;
-    }
-
-    public async Task ExecuteAsync()
-    {
-      //await _channel._queue_HandleSend(_msg.Body);
-    }
-  }
-
-
   public class Channel
   {
     private abstract class ChannelTask : ITask
     {
-      protected readonly Body _msgBody;
+      protected readonly FlushMessageBody _msgBody;
       protected readonly Channel _channel;
-      protected ChannelTask(Channel channel, Body msgBody)
+      protected ChannelTask(Channel channel, FlushMessageBody msgBody)
       {
         _channel = channel;
         _msgBody = msgBody;
@@ -99,7 +142,7 @@ namespace xln.core
 
     private class RecieveMessageTask : ChannelTask
     {
-      public RecieveMessageTask(Channel channel, Body msgBody)
+      public RecieveMessageTask(Channel channel, FlushMessageBody msgBody)
         : base(channel, msgBody)
       { }
 
@@ -130,14 +173,16 @@ namespace xln.core
 
     JobQueue _operationsQueue;
 
+    Block _pendingBlock;
+
     User _owner;
 
-    //public static string MakeChannelId(XlnAddress leftAddress, XlnAddress rightAddress)
-    //{
-    //  return (leftAddress.ToString() + ":" + rightAddress.ToString());
-    //}
+    List<Transition> _mempool;
 
-    public ChannelState State { get; private set; }
+    ChannelState _dryRunState;
+    ChannelState _state;
+
+    //public ChannelState State { get; private set; }
 
     public Channel(User owner, XlnAddress ourAddress, XlnAddress peerAddress/*, ILogger<Channel> logger, IChannelStorage channelStorage*/)
     {
@@ -148,15 +193,19 @@ namespace xln.core
       _ourAddress = ourAddress;
       _peerAddress = peerAddress;
 
-      State = new ChannelState();
-      
-      State.Left = GetLeftAddress(ourAddress, peerAddress);
-      State.Right = GetRightAddress(ourAddress, peerAddress);
-      State.ChannelKey = CalculateChannelKey(State.Left, State.Right);
+      _state = new ChannelState();
 
-      EnsureValidAddressOrderOrThrow(State.Left, State.Right);
+      _state.Left = GetLeftAddress(ourAddress, peerAddress);
+      _state.Right = GetRightAddress(ourAddress, peerAddress);
+      _state.ChannelKey = CalculateChannelKey(_state.Left, _state.Right);
+
+      EnsureValidAddressOrderOrThrow(_state.Left, _state.Right);
 
       _operationsQueue = new JobQueue();
+
+      _pendingBlock = null;
+
+      _mempool = new List<Transition>();
     }
 
     public static XlnAddress GetLeftAddress(XlnAddress addr1, XlnAddress addr2)
@@ -210,11 +259,8 @@ namespace xln.core
       Buffer.BlockCopy(HexToByteArray(leftAddress), 0, packedData, 0, 32);
       Buffer.BlockCopy(HexToByteArray(rightAddress), 0, packedData, 32, 32);
 
-      // Вычисляем Keccak256 хеш
-      byte[] hashBytes = Sha3Keccack.Current.CalculateHash(packedData);
-
       // Присваиваем результат
-      string channelKey = "0x" + BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant(); ;
+      string channelKey = Keccak256.CalculateHashString(packedData);
       return channelKey;
     }
 
@@ -231,18 +277,142 @@ namespace xln.core
       return bytes;
     }
 
-    public void Recieve(Body msgBody)
+    public void Recieve(FlushMessageBody msgBody)
     {
       _operationsQueue.EnqueueTask(new RecieveMessageTask(this, msgBody));
     }
 
-    private async Task _queue_HandleRecieveAsync(Body msgBody)
+    private async Task _queue_HandleRecieveAsync(FlushMessageBody msgBody)
     {
+      ThrowIfNotValudFlushMessage(msgBody);
 
+      // message body should containg peer signatures for the pending block
+      ApplyPendingBlock(msgBody);
+
+      ApplyNewBlock(msgBody);
+    }
+
+    void ThrowIfNotValudFlushMessage(FlushMessageBody msgBody)
+    {
+      //TODO check if message body valid
+    }
+
+    bool HasPendingBlock()
+    {
+      return (_pendingBlock != null);
+    }
+
+    void ApplyPendingBlock(FlushMessageBody msgBody)
+    {
+      // msgBody should not contain signatures or pending block should exist
+      if (!HasPendingBlock())
+        throw new InvalidOperationException();
+    }
+
+    void ApplyNewBlock(FlushMessageBody msgBody)
+    {
+      Block block = msgBody.Block;
+      if (block != null)
+      {
+        Flush();
+        return;
+      }
+
+      ThrowIfBlockInvalid(block);
+
+      ApplyBlockDryRun(block);
+      if(!VerifySignaturesDryRun(msgBody.NewSignatures))
+      {
+        throw new InvalidOperationException();
+      }
+
+      ApplyBlock(block);
+
+      //CreateAndSaveHistoricalBlock();
+
+      //TODO save channel state
+      //Save();
+
+      Flush();
+    }
+
+    void ThrowIfBlockInvalid(Block block)
+    {
+      //if (block.previousStateHash != keccak256(encode(this.state)))
+      //{
+      //  this.logger.log('fatal prevhashstate', stringify(debugState), block, stringify(this.state), this.data.pendingBlock);
+      //  throw new Error(`Invalid previousStateHash: ${ this.ctx.user.toTag() } ${ block.previousStateHash} ${ debugState.blockId}
+      //  vs ${ this.state.blockId}`);
+      //}
+
+      //if (block.previousBlockHash != this.state.previousBlockHash)
+      //{
+      //  this.logger.log('fatal prevhashblock', debugState, this.state);
+      //  throw new Error('Invalid previousBlockHash');
+      //}
+
+      //if (block.isLeft == this.isLeft)
+      //{
+      //  throw new Error('Invalid isLeft');
+      //}
+    }
+
+    private void ApplyBlockDryRun(Block block)
+    {
+      _dryRunState = _state.DeepClone();
+      ApplyBlockToChannelState(_dryRunState, block);
+    }
+
+    private void ApplyBlock(Block block)
+    {
+      ApplyBlockToChannelState(_state, block);
+    }
+
+    private void ApplyBlockToChannelState(ChannelState channelState, Block block)
+    {
+      // Save previous hash first before changing the state
+      channelState.PreviousStateHash = Keccak256.CalculateHashString(MessageSerializer.Encode(channelState));
+      channelState.PreviousBlockHash = Keccak256.CalculateHashString(MessageSerializer.Encode(block));
+      channelState.BlockId++;
+      channelState.Timestamp = block.Timestamp;
+      
+      for (int i = 0; i < block.Transitions.Count(); i++)
+      {
+        ApplyTransitionToChannelState(channelState, block.Transitions[i]);
+      }
+    }
+
+    private void ApplyTransitionToChannelState(ChannelState channelState, Transition transition)
+    {
+      try
+      {
+        transition.ApplyTo(channelState);
+      }
+      catch (Exception e)
+      {
+        Console.WriteLine($"Error in ApplyTransition: {e.Message}");
+        throw;
+      }
+    }
+
+    private bool VerifySignaturesDryRun(List<string> signatures)
+    {
+      return VerifySignaturesOnState(_dryRunState, signatures);
+    }
+
+    private bool VerifySignatures(List<string> signatures)
+    {
+      return VerifySignaturesOnState(_state, signatures);
+    }
+
+    private bool VerifySignaturesOnState(ChannelState channelState, List<string> signatures)
+    {
+      return false;
     }
 
     public void Flush()
     {
+      //  TODO should we check if _mempool has transitions and move them to FlushTask here?
       _operationsQueue.EnqueueTask(new FlushTask(this));
     }
 

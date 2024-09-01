@@ -78,9 +78,57 @@ namespace xln.core
     }
   }
 
+
+  [MessagePackObject]
+  public class FlushMessageBody : Body
+  {
+    [Key("blockId")]
+    public int BlockId { get; set; }
+
+    [Key("pendingSignatures")]
+    public List<string> PendingSignatures { get; set; }
+
+    [Key("newSignatures")]
+    public List<string>? NewSignatures { get; set; }
+
+    [Key("block")]
+    public Block? Block { get; set; }
+
+    [Key("debugState")]
+    public string? DebugState { get; set; }
+
+    [Key("counter")]
+    public int Counter { get; set; }
+
+    public FlushMessageBody(
+        int blockId,
+        List<string>? pendingSignatures = null,
+        List<string>? newSignatures = null,
+        Block? block = null,
+        string? debugState = null,
+        int counter = 0
+    ) : base(BodyTypes.kFlushMessage)
+    {
+      BlockId = blockId;
+      PendingSignatures = pendingSignatures ?? new List<string>();
+      NewSignatures = newSignatures;
+      Block = block;
+      DebugState = debugState;
+      Counter = counter;
+    }
+
+    // Конструктор без параметров для MessagePack
+    [SerializationConstructor]
+    public FlushMessageBody() : base(BodyTypes.kFlushMessage)
+    {
+      PendingSignatures = new List<string>();
+    }
+  }
+
+
   public static class MessageSerializer
   {
-    public static byte[] Encode(Message message)
+    public static byte[] Encode(object obj)
     {
       var options = MessagePackSerializerOptions.Standard.WithResolver(
           CompositeResolver.Create(
@@ -90,7 +138,7 @@ namespace xln.core
           )
       );
 
-      return MessagePackSerializer.Serialize(message, options);
+      return MessagePackSerializer.Serialize(obj, options);
     }
 
     public static Message Decode(byte[] data)

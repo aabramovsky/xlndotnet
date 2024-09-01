@@ -128,30 +128,6 @@ namespace xln.core
       _ = ListenTransportAsync(transport);
     }
 
-    private async void SendTestMessage(ITransport transport)
-    {
-      var message = new Message
-      {
-        Header = new Header
-        {
-          From = "sender@example.com",
-          To = "recipient@example.com"
-        },
-        Body = new Body(BodyTypes.kBroadcastProfile)
-      };
-
-      // Добавляем дополнительные свойства в Body
-      message.Body.SetProperty("name", "John Doe");
-      message.Body.SetProperty("age", 30);
-
-      await transport.SendAsync(message, CancellationToken.None);
-    }
-
-    //public Channel GetOrCreateChannel(string address)
-    //{
-    //  // Логика получения существующего или создания нового Channel
-    //}
-
     // each transport works in its own thread
     private async Task ListenTransportAsync(ITransport transport)
     {
