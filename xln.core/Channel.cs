@@ -7,7 +7,8 @@ using System.Threading.Tasks;
 using System.Numerics;
 using System.Threading.Channels;
 using Nethereum.Util;
-
+using Nethereum.ABI;
+using Nethereum.Hex.HexConvertors.Extensions;
 
 namespace xln.core
 {
@@ -76,6 +77,13 @@ namespace xln.core
 
     public bool IsLeft { get { return _isLeft; } }
 
+    private long SentTransitions { get; set; } = 0;
+
+    private Block? PendingBlock { get { return _pendingBlock; } set { _pendingBlock = value; } }
+    private List<string> PendingSignatures { get; set; }
+    private long SendCounter { get; set; }
+    public string ChannelId { get { return Owner.MyAddress.ToString() + ":" + PeerAddress.ToString(); } }
+
     public Channel(User owner, XlnAddress peerAddress/*, ILogger<Channel> logger, IChannelStorage channelStorage*/)
     {
       _owner = owner;
@@ -100,6 +108,10 @@ namespace xln.core
       _mempool = new List<Transition>();
 
       _isLeft = (owner.MyAddress == State.Left);
+
+      SentTransitions = 0;
+
+      SendCounter = 0;
     }
 
     public static XlnAddress GetLeftAddress(XlnAddress addr1, XlnAddress addr2)
@@ -205,8 +217,6 @@ namespace xln.core
     {
       ThrowIfBlockInvalid(block);
 
-      _dryRunState = _state.DeepClone();
-
       ApplyBlockDryRun(block);
 
       if (!VerifySignaturesDryRun(signatures))
@@ -236,6 +246,8 @@ namespace xln.core
 
     private void ApplyBlockDryRun(Block block)
     {
+      _dryRunState = _state.DeepClone();
+
       ApplyBlockToChannelState(block, true);
     }
 
@@ -294,28 +306,215 @@ namespace xln.core
       _operationsQueue.EnqueueTask(new FlushTask(this));
     }
 
+    //TODO переписать всю эту ебану срань к хуям
     private async Task _queue_HandleFlushAsync()
     {
-      Body b = new Body(BodyTypes.kFlushMessage);
-      await _owner.SendToAsync(_peerAddress, b, CancellationToken.None);
+      //todo мы ведь не должны вызывать флуш когда ожидаем что отправленный блок применит другая сторона?!
+      if (SentTransitions > 0)
+      {
+        Console.WriteLine($"Already flushing {ChannelId} blockid {State.BlockId}");
+        return;
+      }
+
+
+      FlushMessageBody body = new FlushMessageBody(State.BlockId, new List<string>());
+
+      // signed before block is applied
+      var initialProofs = GetSubchannelProofs(State);
+      
+      body.PendingSignatures = initialProofs.Signatures;
+      
+      if (body.PendingSignatures.Count != State.Subchannels.Count + 1)
+        throw new InvalidOperationException("Fatal: Invalid pending signatures length");
+
+      // flush may or may not include new block
+      if (_mempool.Count > 0)
+      {
+        const int BLOCK_LIMIT = 10;
+        var transitions = _mempool.Take(BLOCK_LIMIT).ToList();
+        var previousState = State.DeepClone();
+        
+        var block = new Block
+        {
+          IsLeft = this.IsLeft,
+          Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+          PreviousStateHash = Keccak256.CalculateHashString(MessageSerializer.Encode(previousState)),
+          PreviousBlockHash = State.PreviousBlockHash,
+          BlockId = State.BlockId,
+          Transitions = transitions
+        };
+
+        ApplyBlockDryRun(block);
+        int expectedLength = DryRunState.Subchannels.Count + 1;
+
+        PendingBlock = block.DeepClone();
+        SentTransitions = transitions.Count;
+
+        // signed after block is applied
+        body.NewSignatures = GetSubchannelProofs(DryRunState).Signatures;
+        if (expectedLength != body.NewSignatures.Count)
+          throw new InvalidOperationException("Invalid signature length");
+        
+        PendingSignatures = body.NewSignatures;
+
+        body.Block = block;
+        if (body.NewSignatures.Count != expectedLength)
+          throw new InvalidOperationException("Fatal: Invalid pending signatures length");
+      }
+
+      body.Counter = ++SendCounter;
+
+      await _owner.SendToAsync(PeerAddress, body, CancellationToken.None);
     }
-    //public void ApplyTransition(ITransition transition)
-    //{
-    //  transition.Apply(this);
-    //  SaveState();
-    //}
-
-    //private void SaveState()
-    //{
-    //  _channelStorage.SaveChannelState(State);
-    //}
-
+    
     public void AddToMempool(Transition tr)
     {
       lock(_mempool)
       {
         _mempool.Add(tr);
       }
+    }
+
+    //TODO переписать всю эту ебану срань к хуям
+    public SubchannelProofs GetSubchannelProofs(ChannelState state)
+    {      
+      var encodedProofBody = new List<string>();
+      var proofHash = new List<string>();
+      var signatures = new List<string>();
+      var subcontractBatch = new List<SubcontractProviderBatch>();
+      var proofBody = new List<ProofBody>();
+
+      for (int i = 0; i < state.Subchannels.Count; i++)
+      {
+        var subchannel = state.Subchannels[i];
+        proofBody.Add(new ProofBody
+        {
+          OffDeltas = subchannel.Deltas.Select(d => d.OffDelta).ToList(),
+          TokenIds = subchannel.Deltas.Select(d => d.TokenId).ToList(),
+          Subcontracts = new List<SubcontractInfo>()
+        });
+
+        subcontractBatch.Add(new SubcontractProviderBatch
+        {
+          Payment = new List<PaymentSubcontract>(),
+          Swap = new List<SwapSubcontract>()
+        });
+      }
+
+      foreach (var storedSubcontract in state.Subcontracts)
+      {
+        if (storedSubcontract.OriginalTransition is AddPayment addPayment)
+        {
+          ProcessAddPaymentSubcontract(state, subcontractBatch, addPayment);
+        }
+        else if (storedSubcontract.OriginalTransition is AddSwap addSwap)
+        {
+          ProcessAddSwapSubcontract(state, subcontractBatch, addSwap);
+        }
+      }
+
+      for (int i = 0; i < state.Subchannels.Count; i++)
+      {
+        var subchannel = state.Subchannels[i];
+        var encodedBatch = AbiEncode(AbiDefinitions.SubcontractBatchABI, subcontractBatch[i]);
+
+        proofBody[i].Subcontracts.Add(new SubcontractInfo
+        {
+          SubcontractProviderAddress = ENV.SubcontractProviderAddress,
+          EncodedBatch = encodedBatch,
+          Allowances = new List<object>() // Implement allowance logic if needed
+        });
+
+        encodedProofBody.Add(AbiEncode(AbiDefinitions.ProofbodyABI, proofBody[i]));
+
+        var fullProof = new object[]
+        {
+                    (int)MessageType.DisputeProof,
+                    state.ChannelKey,
+                    subchannel.CooperativeNonce,
+                    subchannel.DisputeNonce,
+                    Keccak256.CalculateHash(encodedProofBody[i].HexToByteArray())
+        };
+
+        var encodedMsg = AbiEncode(
+            new[] { "uint8", "bytes", "uint", "uint", "bytes32" },
+            fullProof
+        );
+
+        proofHash.Add(Keccak256.CalculateHashString(encodedMsg.HexToByteArray()));
+        signatures.Add(Owner.SignMessage(proofHash[i]));
+      }
+
+      // Add global state signature on top
+      signatures.Add(Owner.SignMessage(Keccak256.CalculateHashString(MessageSerializer.Encode(state))));
+
+      return new SubchannelProofs
+      {
+        EncodedProofBody = encodedProofBody,
+        SubcontractBatch = subcontractBatch,
+        ProofBody = proofBody,
+        ProofHash = proofHash,
+        Signatures = signatures
+      };
+    }
+
+    private void ProcessAddPaymentSubcontract(ChannelState state, List<SubcontractProviderBatch> subcontractBatch, AddPayment addPayment)
+    {
+      var subchannelIndex = state.Subchannels.FindIndex(s => s.ChainId == addPayment.ChainId);
+      if (subchannelIndex < 0)
+      {
+        throw new InvalidOperationException($"Subchannel with chainId {addPayment.ChainId} not found.");
+      }
+
+      var deltaIndex = state.Subchannels[subchannelIndex].Deltas.FindIndex(d => d.TokenId == addPayment.TokenId);
+      if (deltaIndex < 0)
+      {
+        throw new InvalidOperationException($"Delta with tokenId {addPayment.TokenId} not found.");
+      }
+
+      subcontractBatch[subchannelIndex].Payment.Add(new PaymentSubcontract
+      {
+        DeltaIndex = deltaIndex,
+        Amount = addPayment.Amount,
+        RevealedUntilBlock = addPayment.Timelock,
+        Hash = addPayment.Hashlock
+      });
+    }
+
+    private void ProcessAddSwapSubcontract(ChannelState state, List<SubcontractProviderBatch> subcontractBatch, AddSwap addSwap)
+    {
+      var subchannelIndex = state.Subchannels.FindIndex(s => s.ChainId == addSwap.ChainId);
+      if (subchannelIndex < 0)
+      {
+        throw new InvalidOperationException($"Subchannel with chainId {addSwap.ChainId} not found.");
+      }
+
+      var deltaIndex = state.Subchannels[subchannelIndex].Deltas.FindIndex(d => d.TokenId == addSwap.TokenId);
+      if (deltaIndex < 0)
+      {
+        throw new InvalidOperationException($"Delta with tokenId {addSwap.TokenId} not found.");
+      }
+
+      var subTokenIndex = state.Subchannels[subchannelIndex].Deltas.FindIndex(d => d.TokenId == addSwap.SubTokenId);
+      if (subTokenIndex < 0)
+      {
+        throw new InvalidOperationException($"Delta with subTokenId {addSwap.SubTokenId} not found.");
+      }
+
+      subcontractBatch[subchannelIndex].Swap.Add(new SwapSubcontract
+      {
+        OwnerIsLeft = addSwap.OwnerIsLeft,
+        AddDeltaIndex = deltaIndex,
+        AddAmount = addSwap.AddAmount,
+        SubDeltaIndex = subTokenIndex,
+        SubAmount = addSwap.SubAmount
+      });
+    }
+
+    private string AbiEncode(string[] types, params object[] values)
+    {
+      var abiEncoder = new ABIEncode();
+      return abiEncoder.GetABIEncoded(types, values).ToHex();
     }
   }
 }

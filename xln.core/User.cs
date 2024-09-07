@@ -60,7 +60,7 @@ namespace xln.core
 
     private Dictionary<string, HashlockData> hashlockMap = new Dictionary<string, HashlockData>();
 
-    private EthECKey _encryptionKey;
+    private EthereumSigner _signer;
 
 
     public XlnAddress MyAddress { get { return _myAddress; } }
@@ -74,6 +74,13 @@ namespace xln.core
 
       _myId = myId;
       _myAddress = "myaddress";
+
+      _signer = new EthereumSigner("0x123456");
+    }
+    
+    public string SignMessage(string message)
+    {
+      return _signer.SignMessage(message);
     }
 
     private void _server_OnClientConnected(object? sender, ServerEventArgs e)

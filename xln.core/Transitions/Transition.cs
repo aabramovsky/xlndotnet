@@ -153,4 +153,111 @@ namespace xln.core
     }
   }
 
+  public class AddSwap : Transition
+  {
+    public override TransitionType Type => TransitionType.AddSwap;
+    public int ChainId { get; }
+    public bool OwnerIsLeft { get; }
+    public int TokenId { get; }
+    public BigInteger AddAmount { get; }
+    public int SubTokenId { get; }
+    public BigInteger SubAmount { get; }
+
+    public AddSwap(int chainId, bool ownerIsLeft, int tokenId, BigInteger addAmount, int subTokenId, BigInteger subAmount)
+    {
+      ChainId = chainId;
+      OwnerIsLeft = ownerIsLeft;
+      TokenId = tokenId;
+      AddAmount = addAmount;
+      SubTokenId = subTokenId;
+      SubAmount = subAmount;
+    }
+
+    public override void ApplyTo(Channel channel, Block block, bool isDryRun)
+    {
+      ChannelState state = isDryRun ? channel.DryRunState : channel.State;
+      if (OwnerIsLeft != !block.IsLeft)
+      {
+        throw new InvalidOperationException("Incorrect owner for swap");
+      }
+
+      var storedSubcontract = new StoredSubcontract
+      {
+        OriginalTransition = this,
+        Timestamp = block.Timestamp,
+        IsLeft = block.IsLeft,
+        TransitionId = state.TransitionId,
+        BlockId = block.BlockId
+      };
+
+      state.Subcontracts.Add(storedSubcontract);
+    }
+
+    public override Transition DeepClone()
+    {
+      return new AddSwap(ChainId, OwnerIsLeft, TokenId, AddAmount, SubTokenId, SubAmount);
+    }
+  }
+
+  public class SettleSwap : Transition
+  {
+    public override TransitionType Type => TransitionType.SettleSwap;
+    public int ChainId { get; }
+    public int SubcontractIndex { get; }
+    public decimal FillingRatio { get; }
+
+    public SettleSwap(int chainId, int subcontractIndex, decimal fillingRatio)
+    {
+      ChainId = chainId;
+      SubcontractIndex = subcontractIndex;
+      FillingRatio = fillingRatio;
+    }
+
+    public override void ApplyTo(Channel channel, Block block, bool isDryRun)
+    {
+      ChannelState state = isDryRun ? channel.DryRunState : channel.State;
+
+      if (SubcontractIndex < 0 || SubcontractIndex >= state.Subcontracts.Count)
+      {
+        throw new ArgumentOutOfRangeException(nameof(SubcontractIndex), "Invalid subcontract index");
+      }
+
+      var storedSubcontract = state.Subcontracts[SubcontractIndex];
+      if (storedSubcontract.OriginalTransition is not AddSwap swap)
+      {
+        throw new InvalidOperationException("Stored subcontract is not an AddSwap transition");
+      }
+
+      if (swap.OwnerIsLeft == block.IsLeft)
+      {
+        throw new InvalidOperationException("Incorrect owner for swap");
+      }
+
+      if (FillingRatio == null)
+      {
+        // Remove the swap
+        state.Subcontracts.RemoveAt(SubcontractIndex);
+      }
+      else
+      {
+        // Resolve the swap
+        Delta addDelta = state.GetDelta(ChainId, swap.TokenId);
+        Delta subDelta = state.GetDelta(ChainId, swap.SubTokenId);
+
+        BigInteger filledAddAmount = 0;//(swap.AddAmount * FillingRatio);
+        BigInteger filledSubAmount = 0;// (swap.SubAmount * FillingRatio);
+
+        addDelta.OffDelta -= filledAddAmount;
+        subDelta.OffDelta += filledSubAmount;
+
+        state.Subcontracts.RemoveAt(SubcontractIndex);
+      }
+    }
+
+    public override Transition DeepClone()
+    {
+      return new SettleSwap(ChainId, SubcontractIndex, FillingRatio);
+    }
+  }
+
 }

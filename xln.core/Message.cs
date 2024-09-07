@@ -83,7 +83,7 @@ namespace xln.core
   public class FlushMessageBody : Body
   {
     [Key("blockId")]
-    public int BlockId { get; set; }
+    public long BlockId { get; set; }
 
     [Key("pendingSignatures")]
     public List<string> PendingSignatures { get; set; }
@@ -98,15 +98,15 @@ namespace xln.core
     public string? DebugState { get; set; }
 
     [Key("counter")]
-    public int Counter { get; set; }
+    public long Counter { get; set; }
 
     public FlushMessageBody(
-        int blockId,
+        long blockId,
         List<string>? pendingSignatures = null,
         List<string>? newSignatures = null,
         Block? block = null,
         string? debugState = null,
-        int counter = 0
+        long counter = 0
     ) : base(BodyTypes.kFlushMessage)
     {
       BlockId = blockId;
