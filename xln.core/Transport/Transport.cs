@@ -84,7 +84,7 @@ namespace xln.core
     {
       try
       {
-        return MessageSerializer.Decode(messageBytes);
+        return MessageSerializer.Decode<Message>(messageBytes);
       }
       catch (Exception ex)
       {

@@ -11,120 +11,6 @@ using Nethereum.Util;
 
 namespace xln.core
 {
-  public class ChannelState
-  {
-    public XlnAddress Left { get; set; }
-    public XlnAddress Right { get; set; }
-    public string ChannelKey { get; set; }
-    public string PreviousBlockHash { get; set; }
-    public string PreviousStateHash { get; set; }
-    public long BlockId { get; set; }
-    public long Timestamp { get; set; }
-    public long TransitionId { get; set; }
-    public List<Subchannel> Subchannels { get; set; } = new List<Subchannel>();
-
-    //public List<StoredSubcontract> Subcontracts { get; set; } = new List<StoredSubcontract>();
-
-    public ChannelState()
-    {
-      Left = new XlnAddress();  // Предполагается, что у XlnAddress есть конструктор по умолчанию
-      Right = new XlnAddress();
-      ChannelKey = "0x0";
-      PreviousBlockHash = "0x0";
-      PreviousStateHash = "0x0";
-      BlockId = 0;
-      Timestamp = 0;
-      TransitionId = 0;
-      Subchannels = new List<Subchannel>();
-      //Subcontracts = new List<StoredSubcontract>();
-    }
-
-    public ChannelState DeepClone()
-    {
-      return new ChannelState
-      {
-        Left = new XlnAddress(Left.ToString()), // Create a new XlnAddress with the same value
-        Right = new XlnAddress(Right.ToString()),
-        ChannelKey = ChannelKey,
-        PreviousBlockHash = PreviousBlockHash,
-        PreviousStateHash = PreviousStateHash,
-        BlockId = BlockId,
-        Timestamp = Timestamp,
-        TransitionId = TransitionId,
-        Subchannels = Subchannels?.Select(s => s.DeepClone()).ToList() // Assuming Subchannel has a DeepClone method
-                                                                       //Subcontracts = Subcontracts?.Select(s => s.DeepClone()).ToList() // Uncomment if needed
-      };
-    }
-
-    // Implement ICloneable interface
-    public object Clone()
-    {
-      return DeepClone();
-    }
-  }
-
-  public class Subchannel
-  {
-    public int ChainId { get; set; }
-    public List<Delta> Deltas { get; set; } = new List<Delta>();
-    public long CooperativeNonce { get; set; }
-    public long DisputeNonce { get; set; }
-
-    //public List<ProposedEvent> ProposedEvents { get; set; } = new List<ProposedEvent>();
-    public bool ProposedEventsByLeft { get; set; }
-
-    public Subchannel DeepClone()
-    {
-      return new Subchannel
-      {
-        ChainId = ChainId,
-        Deltas = Deltas?.Select(d => d.DeepClone()).ToList(),
-        CooperativeNonce = CooperativeNonce,
-        DisputeNonce = DisputeNonce,
-        //ProposedEvents = ProposedEvents?.Select(pe => pe.DeepClone()).ToList(), // Uncomment if needed
-        ProposedEventsByLeft = ProposedEventsByLeft
-      };
-    }
-
-    public object Clone()
-    {
-      return DeepClone();
-    }
-  }
-
-  public class Delta
-  {
-    public int TokenId { get; set; }
-    public BigInteger Collateral { get; set; }
-    public BigInteger OnDelta { get; set; }
-    public BigInteger OffDelta { get; set; }
-    public BigInteger LeftCreditLimit { get; set; }
-    public BigInteger RightCreditLimit { get; set; }
-    public BigInteger LeftAllowance { get; set; }
-    public BigInteger RightAllowance { get; set; }
-
-    public Delta DeepClone()
-    {
-      return new Delta
-      {
-        TokenId = TokenId,
-        Collateral = Collateral,
-        OnDelta = OnDelta,
-        OffDelta = OffDelta,
-        LeftCreditLimit = LeftCreditLimit,
-        RightCreditLimit = RightCreditLimit,
-        LeftAllowance = LeftAllowance,
-        RightAllowance = RightAllowance
-      };
-    }
-
-    public object Clone()
-    {
-      return DeepClone();
-    }
-  }
-
-  
   public class Channel
   {
     private abstract class ChannelTask : ITask
@@ -168,7 +54,7 @@ namespace xln.core
     //private readonly ILogger<Channel> _logger;
     //private readonly IChannelStorage _channelStorage;
 
-    XlnAddress _ourAddress;
+    //XlnAddress _ourAddress;
     XlnAddress _peerAddress;
 
     JobQueue _operationsQueue;
@@ -181,22 +67,28 @@ namespace xln.core
 
     ChannelState _dryRunState;
     ChannelState _state;
+    bool _isLeft;
 
-    //public ChannelState State { get; private set; }
+    public ChannelState State { get { return _state; } private set { _state = value; } }
+    public ChannelState DryRunState { get { return _dryRunState; } private set { _dryRunState = value; } }
+    public User Owner {  get { return _owner; } }
+    public XlnAddress PeerAddress {  get { return _peerAddress; } }
 
-    public Channel(User owner, XlnAddress ourAddress, XlnAddress peerAddress/*, ILogger<Channel> logger, IChannelStorage channelStorage*/)
+    public bool IsLeft { get { return _isLeft; } }
+
+    public Channel(User owner, XlnAddress peerAddress/*, ILogger<Channel> logger, IChannelStorage channelStorage*/)
     {
       _owner = owner;
       //_logger = logger;
       //_channelStorage = channelStorage;
 
-      _ourAddress = ourAddress;
+      //_ourAddress = ourAddress;
       _peerAddress = peerAddress;
 
       _state = new ChannelState();
 
-      _state.Left = GetLeftAddress(ourAddress, peerAddress);
-      _state.Right = GetRightAddress(ourAddress, peerAddress);
+      _state.Left = GetLeftAddress(owner.MyAddress, peerAddress);
+      _state.Right = GetRightAddress(owner.MyAddress, peerAddress);
       _state.ChannelKey = CalculateChannelKey(_state.Left, _state.Right);
 
       EnsureValidAddressOrderOrThrow(_state.Left, _state.Right);
@@ -206,6 +98,8 @@ namespace xln.core
       _pendingBlock = null;
 
       _mempool = new List<Transition>();
+
+      _isLeft = (owner.MyAddress == State.Left);
     }
 
     public static XlnAddress GetLeftAddress(XlnAddress addr1, XlnAddress addr2)
@@ -247,59 +141,38 @@ namespace xln.core
 
     public static string CalculateChannelKey(XlnAddress left, XlnAddress right)
     {
-      string leftAsStr = left.ToString();
-      string rightAsStr = right.ToString();
-
-      // Убедимся, что адреса начинаются с "0x"
-      string leftAddress = leftAsStr.ToString().StartsWith("0x") ? leftAsStr : "0x" + leftAsStr;
-      string rightAddress = rightAsStr.StartsWith("0x") ? rightAsStr : "0x" + rightAsStr;
-
       // Упаковываем адреса
       byte[] packedData = new byte[64];
-      Buffer.BlockCopy(HexToByteArray(leftAddress), 0, packedData, 0, 32);
-      Buffer.BlockCopy(HexToByteArray(rightAddress), 0, packedData, 32, 32);
+      Buffer.BlockCopy(Keccak256.HexToByteArray(left.ToString()), 0, packedData, 0, 32);
+      Buffer.BlockCopy(Keccak256.HexToByteArray(right.ToString()), 0, packedData, 32, 32);
 
       // Присваиваем результат
       string channelKey = Keccak256.CalculateHashString(packedData);
       return channelKey;
     }
-
-    private static byte[] HexToByteArray(string hex)
-    {
-      if (hex.StartsWith("0x"))
-        hex = hex.Substring(2);
-
-      byte[] bytes = new byte[hex.Length / 2];
-      for (int i = 0; i < bytes.Length; i++)
-      {
-        bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
-      }
-      return bytes;
-    }
-
+    
     public void Recieve(FlushMessageBody msgBody)
     {
       _operationsQueue.EnqueueTask(new RecieveMessageTask(this, msgBody));
     }
 
+    //todo any function here can throw. How exactly should we handle these errors?
     private async Task _queue_HandleRecieveAsync(FlushMessageBody msgBody)
     {
       ThrowIfNotValudFlushMessage(msgBody);
 
       // message body should containg peer signatures for the pending block
+      // or pending block should not exists
       ApplyPendingBlock(msgBody);
 
       ApplyNewBlock(msgBody);
+
+      Flush(); // flush transitions in mempool if any
     }
 
     void ThrowIfNotValudFlushMessage(FlushMessageBody msgBody)
     {
       //TODO check if message body valid
-    }
-
-    bool HasPendingBlock()
-    {
-      return (_pendingBlock != null);
     }
 
     void ApplyPendingBlock(FlushMessageBody msgBody)
@@ -309,22 +182,16 @@ namespace xln.core
         throw new InvalidOperationException();
     }
 
+    bool HasPendingBlock()
+    {
+      return (_pendingBlock != null);
+    }
+
     void ApplyNewBlock(FlushMessageBody msgBody)
     {
       Block block = msgBody.Block;
-      if (block != null)
-      {
-        Flush();
-        return;
-      }
 
-      ThrowIfBlockInvalid(block);
-
-      ApplyBlockDryRun(block);
-      if(!VerifySignaturesDryRun(msgBody.NewSignatures))
-      {
-        throw new InvalidOperationException();
-      }
+      ValidateBlockAndSignaturesOrThrow(block, msgBody.NewSignatures);
 
       ApplyBlock(block);
 
@@ -332,8 +199,18 @@ namespace xln.core
 
       //TODO save channel state
       //Save();
+    }
 
-      Flush();
+    void ValidateBlockAndSignaturesOrThrow(Block block, List<string> signatures)
+    {
+      ThrowIfBlockInvalid(block);
+
+      _dryRunState = _state.DeepClone();
+
+      ApplyBlockDryRun(block);
+
+      if (!VerifySignaturesDryRun(signatures))
+        throw new InvalidOperationException();
     }
 
     void ThrowIfBlockInvalid(Block block)
@@ -359,17 +236,18 @@ namespace xln.core
 
     private void ApplyBlockDryRun(Block block)
     {
-      _dryRunState = _state.DeepClone();
-      ApplyBlockToChannelState(_dryRunState, block);
+      ApplyBlockToChannelState(block, true);
     }
 
     private void ApplyBlock(Block block)
     {
-      ApplyBlockToChannelState(_state, block);
+      ApplyBlockToChannelState(block, false);
     }
 
-    private void ApplyBlockToChannelState(ChannelState channelState, Block block)
+    private void ApplyBlockToChannelState(Block block, bool bDryRun)
     {
+      ChannelState channelState = bDryRun ? _dryRunState : _state;
+
       // Save previous hash first before changing the state
       channelState.PreviousStateHash = Keccak256.CalculateHashString(MessageSerializer.Encode(channelState));
       channelState.PreviousBlockHash = Keccak256.CalculateHashString(MessageSerializer.Encode(block));
@@ -378,15 +256,15 @@ namespace xln.core
       
       for (int i = 0; i < block.Transitions.Count(); i++)
       {
-        ApplyTransitionToChannelState(channelState, block.Transitions[i]);
+        ApplyTransitionToChannelState(block.Transitions[i], block, bDryRun);
       }
     }
 
-    private void ApplyTransitionToChannelState(ChannelState channelState, Transition transition)
+    private void ApplyTransitionToChannelState(Transition transition, Block block, bool bDryRun)
     {
       try
       {
-        transition.ApplyTo(channelState);
+        transition.ApplyTo(this, block, bDryRun);
       }
       catch (Exception e)
       {
@@ -432,5 +310,12 @@ namespace xln.core
     //  _channelStorage.SaveChannelState(State);
     //}
 
+    public void AddToMempool(Transition tr)
+    {
+      lock(_mempool)
+      {
+        _mempool.Add(tr);
+      }
+    }
   }
 }

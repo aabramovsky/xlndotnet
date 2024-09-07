@@ -5,60 +5,14 @@ using System.Linq;
 using System.Text;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using System.Numerics;
+using Nethereum.Signer.Crypto;
+using Nethereum.Signer;
+using Nethereum.Util;
+using Nethereum.Hex.HexConvertors.Extensions;
 
 namespace xln.core
 {
-  public class UserID
-  {
-    private readonly string _value;
-
-    public UserID(string value)
-    {
-      _value = value;
-    }
-
-    public static implicit operator string(UserID userId) => userId._value;
-    public static implicit operator UserID(string value) => new UserID(value);
-
-    public override string ToString() => _value;
-  }
-
-  public class XlnAddress
-  {
-    private readonly string _value;
-
-    public XlnAddress()
-    {
-      _value = "";
-    }
-
-    public XlnAddress(string value)
-    {
-      _value = value;
-    }
-
-    public static implicit operator string(XlnAddress userId) => userId._value;
-    public static implicit operator XlnAddress(string value) => new XlnAddress(value);
-
-    public override string ToString() => _value;
-
-    public static bool operator <(XlnAddress left, XlnAddress right)
-    {
-      return string.Compare(left._value, right._value, StringComparison.Ordinal) < 0;
-    }
-
-    public static bool operator >(XlnAddress left, XlnAddress right)
-    {
-      return string.Compare(left._value, right._value, StringComparison.Ordinal) > 0;
-    }
-
-    public int CompareTo(XlnAddress other)
-    {
-      if (other == null) return 1;
-      return string.Compare(_value, other._value, StringComparison.Ordinal);
-    }
-  }
-
   public class HandleIncomingMessageTask : ITask
   {
     private readonly Message _msg;
@@ -75,6 +29,23 @@ namespace xln.core
     }
   }
 
+  public class HashlockData
+  {
+    public long? OutTransitionId { get; set; }
+    public XlnAddress? OutAddress { get; set; }
+    public long? InTransitionId { get; set; }
+    public XlnAddress? InAddress { get; set; }
+    public string? Secret { get; set; }
+  }
+
+  public class DecryptedPackage
+  {
+    public XlnAddress? FinalRecipient { get; set; }
+    public string? Secret { get; set; }
+    public XlnAddress? NextHop { get; set; }
+    public string? EncryptedPackage { get; set; }
+  }
+
   public class User
   {
     private WebSocketServer _server;
@@ -86,6 +57,13 @@ namespace xln.core
     private JobQueueManager _peerTaskQueues = new JobQueueManager();
 
     private ConcurrentDictionary<XlnAddress, Channel> _channelsByPeer = new ConcurrentDictionary<XlnAddress, Channel>();
+
+    private Dictionary<string, HashlockData> hashlockMap = new Dictionary<string, HashlockData>();
+
+    private EthECKey _encryptionKey;
+
+
+    public XlnAddress MyAddress { get { return _myAddress; } }
 
     public User(UserID myId)
     {
@@ -156,14 +134,22 @@ namespace xln.core
       if(msg.Body.Type == BodyTypes.kFlushMessage) 
       {
         Channel c = GetOrCreateChannel(msg.Header.From);
-        c.Recieve(msg.Body);
+        c.Recieve(msg.Body as FlushMessageBody);
       }
     }
 
     public Channel GetOrCreateChannel(XlnAddress peerAddress)
     {
       // todo load channel state logic
-      return _channelsByPeer.GetOrAdd(peerAddress, _ => new Channel(this, _myAddress, peerAddress));
+      return _channelsByPeer.GetOrAdd(peerAddress, _ => new Channel(this, peerAddress));
+    }
+
+    public Channel GetChannelOrThrow(XlnAddress peerAddress)
+    {
+      if (_channelsByPeer.TryGetValue(peerAddress, out Channel channel))
+        return channel;
+      
+      throw new KeyNotFoundException($"No channel found for peer address: {peerAddress}");
     }
 
     public async Task SendToAsync(XlnAddress peerAddress, Body msgBody, CancellationToken ct)
@@ -173,10 +159,199 @@ namespace xln.core
 
       Message m = new Message();
       m.Body = msgBody;
-      m.Header.From = _myAddress;
+      m.Header.From = MyAddress;
       m.Header.To = peerAddress;
 
       await t.SendAsync(m, ct);
     }
+
+   
+    
+    public async Task ProcessAddPayment(Channel channel, StoredSubcontract storedSubcontract, bool isSender)
+    {
+      if(isSender)
+      {
+        await ProcessAddPaymentAsSender(channel, storedSubcontract);
+      }
+      else
+      {
+        await ProcessAddPaymentAsReciever(channel, storedSubcontract);
+      }
+    }
+
+    private async Task ProcessAddPaymentAsSender(Channel channel, StoredSubcontract storedSubcontract)
+    {
+      AddPayment paymentTransition = ValidateAndExtractTransition<AddPayment>(storedSubcontract);
+
+      string hashlock = paymentTransition.Hashlock;
+
+      lock (hashlockMap)
+      {
+        HashlockData hashlockData = null;
+        if (hashlockMap.TryGetValue(hashlock, out hashlockData))
+        {
+          // entry already exists, do general check
+          if (hashlockData.OutAddress != channel.PeerAddress)
+            throw new InvalidOperationException($"Fatal outAddress mismatch {hashlockData.OutAddress} {channel.PeerAddress}");
+
+          hashlockData.OutTransitionId = storedSubcontract.TransitionId;
+        }
+        else
+        {
+          // create new entry for sender
+          hashlockData = new HashlockData();
+          hashlockData.OutTransitionId = storedSubcontract.TransitionId;
+          hashlockData.OutAddress = channel.PeerAddress;
+
+          hashlockMap[hashlock] = hashlockData;
+        }
+      }
+    }
+
+    private async Task ProcessAddPaymentAsReciever(Channel channel, StoredSubcontract storedSubcontract)
+    {
+      AddPayment payment = ValidateAndExtractTransition<AddPayment>(storedSubcontract);
+
+      DerivedDelta derivedDelta = channel.State.DeriveDelta(
+        payment.ChainId, payment.TokenId, channel.IsLeft
+        );
+
+      if (derivedDelta.InCapacity < payment.Amount)
+        throw new InvalidOperationException($"Fatal Insufficient capacity {derivedDelta.InCapacity} for payment {payment.Amount} "); //{channel.State.ChannelId}
+
+
+      DecryptedPackage decryptedPackage = await DecryptPackage<DecryptedPackage>(payment.EncryptedPackage);
+
+      bool bFinalRecipient = (decryptedPackage.FinalRecipient == this.MyAddress);
+
+      lock (hashlockMap)
+      {
+        HashlockData hashlockData = GetOrAddHashlockData(payment.Hashlock);
+        hashlockData.InTransitionId = storedSubcontract.TransitionId;
+        hashlockData.InAddress = channel.PeerAddress;
+        if (!bFinalRecipient)
+          hashlockData.OutAddress = decryptedPackage.NextHop;
+      }
+
+      if (bFinalRecipient)
+      {
+        await ProcessSettlePayment(channel, storedSubcontract, decryptedPackage.Secret, false);
+      }
+      else
+      {
+        // Intermediate node
+        BigInteger fee = CalculateFee(payment.Amount);
+        BigInteger forwardAmount = payment.Amount - fee;
+        //TODO check if forwardAmount > 0 etc
+        
+        Channel nextHopChannel = GetChannelOrThrow(decryptedPackage.NextHop);
+
+        var forwardPayment = new AddPayment(
+            payment.ChainId,
+            payment.TokenId,
+            forwardAmount,
+            payment.Hashlock,
+            payment.Timelock,
+            decryptedPackage.EncryptedPackage
+        );
+
+
+        nextHopChannel.AddToMempool(forwardPayment);
+        nextHopChannel.Flush();
+      }
+    }
+
+    public async Task ProcessSettlePayment(Channel channel, StoredSubcontract storedSubcontract, string secret, bool isSender)
+    {
+      AddPayment payment = ValidateAndExtractTransition<AddPayment>(storedSubcontract);
+
+      if (isSender)
+      {
+        BigInteger fee = CalculateFee(payment.Amount);
+        // TODO: Implement feesCollected logic
+        // this.feesCollected += fee;
+        // hub finalized their fee
+        return;
+      }
+
+      
+      lock (hashlockMap)
+      {
+        HashlockData paymentInfo;
+        if (!hashlockMap.TryGetValue(payment.Hashlock, out paymentInfo))
+          throw new InvalidOperationException("Fatal: No such paymentinfo");
+
+        // looks like if(isReciever); WTF?!
+        if (paymentInfo.InTransitionId.HasValue && paymentInfo.InAddress != null)
+        {
+          if (paymentInfo.Secret == null)
+          {
+            paymentInfo.Secret = secret;
+            Console.WriteLine($"Settling payment to previous hop: {paymentInfo}");
+            // should we double check payment?
+
+            Channel peerChannel = GetChannelOrThrow(paymentInfo.InAddress);
+
+            var settlePayment = new SettlePayment(paymentInfo.InTransitionId.Value, paymentInfo.Secret);
+            peerChannel.AddToMempool(settlePayment);
+            peerChannel.Flush();            
+          }
+        }
+        else
+        {
+          paymentInfo.Secret = secret;
+          Console.WriteLine($"Payment is now settled {channel.State.ChannelKey}", paymentInfo);
+          // TODO: Implement resolve callback logic
+        }
+      }
+    }
+
+    private HashlockData GetOrAddHashlockData(string hashlock)
+    {
+      lock (hashlockMap)
+      {
+        if (!hashlockMap.TryGetValue(hashlock, out var hashlockData))
+        {
+          hashlockData = new HashlockData();
+          hashlockMap[hashlock] = hashlockData;
+        }
+        return hashlockData;
+      }
+    }
+
+    private static T ValidateAndExtractTransition<T>(StoredSubcontract storedSubcontract) where T : Transition
+    {
+      if (storedSubcontract == null)
+        throw new ArgumentNullException(nameof(storedSubcontract), "storedSubcontract is null");
+
+      if (storedSubcontract.OriginalTransition is not T transition)
+        throw new InvalidOperationException($"OriginalTransition is not of type {typeof(T).Name}");
+
+      return transition;
+    }
+
+    private BigInteger CalculateFee(BigInteger amount)
+    {
+      return BigInteger.Zero;
+    }
+
+    public async Task<T> DecryptPackage<T>(string encryptedPackage)
+    {
+      return MessageSerializer.DecodeFromString<T>(encryptedPackage);
+    }
+
+
+    private static byte[] HexToByteArray(string hex)
+    {
+      if (hex.StartsWith("0x"))
+        hex = hex.Substring(2);
+
+      byte[] bytes = new byte[hex.Length / 2];
+      for (int i = 0; i < bytes.Length; i++)
+      {
+        bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
+      }
+      return bytes;
+    }
   }
- }
+}

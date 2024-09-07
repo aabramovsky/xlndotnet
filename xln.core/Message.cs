@@ -141,7 +141,7 @@ namespace xln.core
       return MessagePackSerializer.Serialize(obj, options);
     }
 
-    public static Message Decode(byte[] data)
+    public static T Decode<T>(byte[] data)
     {
       var options = MessagePackSerializerOptions.Standard.WithResolver(
           CompositeResolver.Create(
@@ -151,7 +151,13 @@ namespace xln.core
           )
       );
 
-      return MessagePackSerializer.Deserialize<Message>(data, options);
+      return MessagePackSerializer.Deserialize<T>(data, options);
+    }
+
+    public static T DecodeFromString<T>(string base64EncodedData)
+    {
+      byte[] data = Convert.FromBase64String(base64EncodedData);
+      return Decode<T> (data);
     }
   }
 }

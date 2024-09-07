@@ -12,7 +12,7 @@ namespace xln.core
     public string PreviousBlockHash { get; set; } // hash of previous block
     public string PreviousStateHash { get; set; }
     public List<Transition> Transitions { get; set; }
-    public int BlockId { get; set; }
+    public long BlockId { get; set; }
     public long Timestamp { get; set; }
 
     // Конструктор по умолчанию
@@ -23,9 +23,8 @@ namespace xln.core
       PreviousStateHash = "";
     }
 
-    // Опциональный конструктор с параметрами
     public Block(bool isLeft, string previousBlockHash, string previousStateHash,
-                 List<Transition> transitions, int blockId, long timestamp)
+                 List<Transition> transitions, long blockId, long timestamp)
     {
       IsLeft = isLeft;
       PreviousBlockHash = previousBlockHash;
@@ -40,7 +39,7 @@ namespace xln.core
       IsLeft = other.IsLeft;
       PreviousBlockHash = other.PreviousBlockHash;
       PreviousStateHash = other.PreviousStateHash;
-      Transitions = other.Transitions.Select(t => new Transition(t)).ToList();
+      Transitions = other.Transitions.Select(t => t.DeepClone()).ToList();
       BlockId = other.BlockId;
       Timestamp = other.Timestamp;
     }

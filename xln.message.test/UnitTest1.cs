@@ -54,7 +54,7 @@ namespace xln.message.test
       originalMessage.Body.SetProperty("testKey", "testValue");
 
       byte[] encoded = MessageSerializer.Encode(originalMessage);
-      Message decodedMessage = MessageSerializer.Decode(encoded);
+      Message decodedMessage = MessageSerializer.Decode<Message>(encoded);
 
       Assert.AreEqual(originalMessage.Header.From, decodedMessage.Header.From);
       Assert.AreEqual(originalMessage.Header.To, decodedMessage.Header.To);
