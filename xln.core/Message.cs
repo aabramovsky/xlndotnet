@@ -141,6 +141,12 @@ namespace xln.core
       return MessagePackSerializer.Serialize(obj, options);
     }
 
+    public static string EncodeAsString(object obj)
+    {
+      byte[] encoded = Encode(obj);
+      return Convert.ToHexString(encoded).ToLowerInvariant();
+    }
+
     public static T Decode<T>(byte[] data)
     {
       var options = MessagePackSerializerOptions.Standard.WithResolver(

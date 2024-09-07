@@ -10,6 +10,7 @@ using Nethereum.Signer.Crypto;
 using Nethereum.Signer;
 using Nethereum.Util;
 using Nethereum.Hex.HexConvertors.Extensions;
+using Org.BouncyCastle.Utilities.Encoders;
 
 namespace xln.core
 {
@@ -359,6 +360,86 @@ namespace xln.core
         bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
       }
       return bytes;
+    }
+
+    private string GenerateSecret()
+    {
+      byte[] secretBytes = new byte[32];
+
+      using (var rng = new System.Security.Cryptography.RNGCryptoServiceProvider())
+      {
+        rng.GetBytes(secretBytes);
+      }
+
+      return Convert.ToHexString(secretBytes).ToLowerInvariant();
+    }
+
+    public AddPayment CreateOnionEncryptedPayment(int chainId, int tokenId, BigInteger amount, List<XlnAddress> route)
+    {
+      string secret = GenerateSecret();
+      string hashlock = Keccak256.CalculateHash(secret);
+
+      if (route.Count == 0)
+      {
+        throw new Exception("Fatal: No route provided");
+      }
+
+      XlnAddress recipient = route[route.Count - 1];
+      route.RemoveAt(route.Count - 1);
+
+      lock (hashlockMap)
+      {
+        hashlockMap[hashlock] = new HashlockData
+        {
+          OutAddress = route.Count > 0 ? route[0] : recipient,
+          OutTransitionId = null // This will be set later when the transition is created
+        };
+      }
+
+      //Console.WriteLine($"onion {routeTag} {hashlock}: {amount}");
+      long timelock = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 3600; // 1 hour timelock
+
+      // Final peel of the onion
+      string encryptedPackage = EncryptForRecipient(recipient, new
+      {
+        amount,
+        tokenId,
+        secret,
+        finalRecipient = recipient
+      });
+
+      // Wrapping in onion layers, if it's not direct peer
+      for (int i = route.Count - 1; i >= 0; i--)
+      {
+        Console.WriteLine($"Encrypted for {route[i]}");
+        encryptedPackage = EncryptForRecipient(route[i], new
+        {
+          amount,
+          tokenId,
+          nextHop = i == route.Count - 1 ? recipient : route[i + 1],
+          encryptedPackage
+        });
+      }
+
+      var paymentTransition = new AddPayment(
+          chainId,
+          tokenId,
+          amount,
+          hashlock,
+          timelock,
+          encryptedPackage
+      );
+
+      return paymentTransition;
+    }
+
+    private string EncryptForRecipient(XlnAddress recipient, object data)
+    {
+      //var recipientProfile = await GetProfile(recipient);
+      //Console.WriteLine($"Retrieved profile {recipientProfile}");
+      // TODO: Implement encryption logic here
+      // For now, we'll just return the encoded data as a hex string
+      return MessageSerializer.EncodeAsString(data);
     }
   }
 }
